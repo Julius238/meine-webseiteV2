@@ -32,7 +32,7 @@ export function Act1() {
   // Last scroll progress remembered for the hook's forced re-sync once
   // metadata arrives (e.g. user reloaded mid-section).
   const progressRef = useRef(0);
-  const ready = useVideoScrub(videoRef, progressRef);
+  const { ready } = useVideoScrub(videoRef, progressRef);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -132,6 +132,26 @@ export function Act1() {
           scrub: true,
         },
       });
+
+      // Always-on poster Ken Burns — runs in parallel with the main video
+      // scrub. If the video is ready, it covers the poster and we don't see
+      // this. If the video stalls or times out into the fallback path, this
+      // is the visible animation that keeps the section alive.
+      gsap.fromTo(
+        ".act1-poster",
+        { scale: 1.02, y: 0 },
+        {
+          scale: 1.09,
+          y: -20,
+          ease: "none",
+          scrollTrigger: {
+            trigger: root.current,
+            start: "top top",
+            end: "+=250%",
+            scrub: true,
+          },
+        }
+      );
     }, root);
 
     return () => ctx.revert();
@@ -152,6 +172,7 @@ export function Act1() {
           endPosterSrc={assets.problemChaos.src!}
           priority
           className="absolute inset-0 -z-10"
+          posterClassName="act1-poster"
         />
 
         {/* light vignette + subtle asymmetric wash for legibility */}

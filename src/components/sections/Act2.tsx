@@ -144,7 +144,7 @@ export function Act2() {
   const root = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef(0);
-  const ready = useVideoScrub(videoRef, progressRef);
+  const { ready } = useVideoScrub(videoRef, progressRef);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -353,6 +353,24 @@ export function Act2() {
           t
         );
       });
+
+      // Always-on poster Ken Burns — graceful fallback that keeps the section
+      // alive if the video stalls or times out (see useVideoScrub).
+      gsap.fromTo(
+        ".act2-poster",
+        { scale: 1.02, y: 0 },
+        {
+          scale: 1.1,
+          y: -24,
+          ease: "none",
+          scrollTrigger: {
+            trigger: root.current,
+            start: "top top",
+            end: "+=600%",
+            scrub: true,
+          },
+        }
+      );
     }, root);
 
     return () => ctx.revert();
@@ -371,6 +389,7 @@ export function Act2() {
           posterSrc={assets.transitionBridge.src!}
           endPosterSrc={assets.transformationNetwork.src!}
           className="absolute inset-0 -z-10"
+          posterClassName="act2-poster"
         />
 
         {/* gentle vignette + bottom fade for legibility */}

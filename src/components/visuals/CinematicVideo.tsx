@@ -10,20 +10,35 @@ type Props = {
   className?: string;
   priority?: boolean;
   objectPosition?: string;
+  /** Class applied to the poster image — Acts use this to target the
+   *  always-on Ken-Burns animation that runs underneath the video. */
+  posterClassName?: string;
 };
 
 /**
- * Scrub-able video stage.
+ * Scrub-able video stage with always-visible poster underneath.
  *
- * IMPORTANT mobile note
- * ---------------------
- * The <video> element only receives `src` once we know the client viewport is
- * ≥ md (768px). On smaller screens the element renders without `src` so the
- * browser fetches ZERO video bytes — saves ~60 MB on phones. The poster
- * (Higgsfield still) is what visitors actually see on mobile anyway.
+ * Layering (top to bottom):
+ *   1. <video>   — only on desktop, only after mount (md viewport + isDesktop)
+ *                  No `poster` attribute → element is transparent until the
+ *                  first frame is actually decoded. The underlying Image is
+ *                  what visitors see during loading, on slow connections, or
+ *                  when scrub times out.
+ *   2. <Image>   — poster. Targetable via posterClassName so Acts attach an
+ *                  always-on Ken-Burns ScrollTrigger (graceful fallback).
+ *
+ * Mobile: video element renders WITHOUT `src` until isDesktop flips true.
  */
 export const CinematicVideo = forwardRef<HTMLVideoElement, Props>(function CinematicVideo(
-  { videoSrc, posterSrc, endPosterSrc, className = "", priority = false, objectPosition = "center" },
+  {
+    videoSrc,
+    posterSrc,
+    endPosterSrc,
+    className = "",
+    priority = false,
+    objectPosition = "center",
+    posterClassName = "",
+  },
   ref
 ) {
   const [isDesktop, setIsDesktop] = useState(false);
@@ -46,7 +61,7 @@ export const CinematicVideo = forwardRef<HTMLVideoElement, Props>(function Cinem
           fill
           sizes="100vw"
           priority={priority}
-          className="object-cover"
+          className={`object-cover will-change-transform ${posterClassName}`}
           style={{ objectPosition }}
         />
 
@@ -64,7 +79,6 @@ export const CinematicVideo = forwardRef<HTMLVideoElement, Props>(function Cinem
         {videoSrc && (
           <video
             ref={ref}
-            // src is only set on desktop — keeps mobile from fetching 60MB:
             src={isDesktop ? videoSrc : undefined}
             muted
             autoPlay={false}
@@ -72,7 +86,9 @@ export const CinematicVideo = forwardRef<HTMLVideoElement, Props>(function Cinem
             controls={false}
             playsInline
             preload="auto"
-            poster={posterSrc}
+            // NO poster attribute on purpose — the underlying <Image> is the
+            // poster and its Ken-Burns animation must be visible while video
+            // buffers or if it never becomes scrub-ready.
             className="absolute inset-0 w-full h-full object-cover hidden md:block"
             style={{ objectPosition }}
             disablePictureInPicture

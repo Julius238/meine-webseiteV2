@@ -3,123 +3,134 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { ScrollTrigger } from "@/lib/gsap";
 
-/**
- * Toggle in DevTools without rebuild:
- *   window.__VIDEO_SCRUB_DEBUG__ = true
- */
-const debug = () =>
-  typeof window !== "undefined" &&
-  (window as unknown as { __VIDEO_SCRUB_DEBUG__?: boolean })
-    .__VIDEO_SCRUB_DEBUG__ === true;
+/* ─── debug ──────────────────────────────────────────────────────────────── */
+
+/** Compile-time flag — flip to true and rebuild to enable logs everywhere. */
+const DEBUG_VIDEO = false;
+
+const debugOn = () =>
+  DEBUG_VIDEO ||
+  (typeof window !== "undefined" &&
+    (window as unknown as { __VIDEO_SCRUB_DEBUG__?: boolean })
+      .__VIDEO_SCRUB_DEBUG__ === true);
 
 const log = (label: string, ...rest: unknown[]) => {
-  if (debug()) console.log(`[scrub:${label}]`, ...rest);
+  if (debugOn()) console.log(`[scrub:${label}]`, ...rest);
 };
 
+/* ─── config ─────────────────────────────────────────────────────────────── */
+
+/** How long to wait for the video to become scrub-ready before giving up. */
+const READY_TIMEOUT_MS = 3500;
+
+/** Min ΔcurrentTime we bother to write (≈ one 30fps frame). */
+const FRAME_EPSILON = 1 / 30;
+
+export type ScrubStatus = "pending" | "ready" | "fallback";
+
+/* ─── hook ───────────────────────────────────────────────────────────────── */
+
 /**
- * Stable video-scrub bootstrap.
+ * Stable video-scrub bootstrap with timeout fallback.
  *
- * Why this hook exists
- * --------------------
- * The naive pattern (pin a section, set `video.currentTime = self.progress *
- * v.duration` in ScrollTrigger's `onUpdate`) is fragile because:
+ * State machine:
+ *   "pending"  → waiting for video metadata + canplay
+ *   "ready"    → scrubbing wired up, currentTime synced to scroll
+ *   "fallback" → video didn't become scrub-ready within READY_TIMEOUT_MS
+ *                (or errored). The poster Ken-Burns animation that runs in
+ *                parallel keeps the section visually alive.
  *
- *   1. On reload the browser may restore the scroll position BEFORE the video
- *      has loaded its metadata. ScrollTrigger fires `onUpdate` once with the
- *      restored progress, but `v.duration = NaN` so the guard skips. After
- *      the metadata finally arrives, nothing forces a re-sync — the video
- *      stays on frame 0 even though the user is mid-section.
+ * The state only ever transitions once. After "ready" or "fallback" it stays.
  *
- *   2. `loadedmetadata` is not a hard guarantee: `readyState` can still be 0
- *      and `duration` can still be `Infinity` / `0` / `NaN` momentarily.
- *
- *   3. `preload="auto"` is a hint; some browsers defer until the element is
- *      visible. Calling `video.load()` explicitly forces the issue.
- *
- * What this hook does
- * -------------------
- *  - Listens to `loadedmetadata`, `loadeddata`, `canplay`, and `error`.
- *  - Tries to flip the `ready` ref to `true` only when:
- *      - `duration` is a finite positive number
- *      - `readyState >= HAVE_METADATA (1)`
- *  - On readiness it does ONE forced sync: reads the latest scroll progress
- *    via the supplied `progressRef`, sets `currentTime` once, and refreshes
- *    ScrollTrigger so its pin spacing is up to date.
- *  - Calls `video.load()` if the video hasn't started buffering yet.
- *
- * What the CALLER does
- * --------------------
- * In its ScrollTrigger config:
- *
- *   onUpdate: (self) => {
- *     progressRef.current = self.progress;        // remember for re-sync
- *     scrubVideo(videoRef.current, ready, self.progress);
- *   }
- *
- * `scrubVideo` is exported below — it is the single safe writer of
- * `currentTime`. The ready guard plus the try/catch around the write make it
- * impossible for a bad seek to break the section.
+ * onResolve fires once with the final status — Acts can use it to log/warn
+ * but don't need to reshape their layout (the always-on poster animation
+ * already provides a graceful fallback visual).
  */
 export function useVideoScrub(
   videoRef: RefObject<HTMLVideoElement | null>,
-  progressRef: RefObject<number>
+  progressRef: RefObject<number>,
+  onResolve?: (status: ScrubStatus) => void
 ) {
   const ready = useRef(false);
+  const status = useRef<ScrubStatus>("pending");
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
 
+    let timeoutId: number | null = null;
+    let resolved = false;
+
     const isReady = () =>
       Number.isFinite(v.duration) && v.duration > 0 && v.readyState >= 1;
 
-    const trySync = (reason: string) => {
-      if (ready.current) return;
-      if (!isReady()) {
-        log("not-ready", reason, {
+    const resolve = (next: ScrubStatus) => {
+      if (resolved) return;
+      resolved = true;
+      status.current = next;
+      ready.current = next === "ready";
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (next === "ready") {
+        try {
+          v.pause();
+          const p = Math.max(0, Math.min(1, progressRef.current ?? 0));
+          v.currentTime = Math.min(p * v.duration, v.duration - 0.05);
+          log("resolved-ready", {
+            duration: v.duration,
+            progress: p,
+            currentTime: v.currentTime,
+          });
+        } catch (e) {
+          log("sync-error", e);
+        }
+        // After the video's intrinsic dimensions are settled the pin spacing
+        // may need to recompute. Cheap and idempotent.
+        ScrollTrigger.refresh();
+      } else {
+        log("resolved-fallback", {
           duration: v.duration,
           readyState: v.readyState,
+          waitedMs: READY_TIMEOUT_MS,
         });
-        return;
       }
-      ready.current = true;
-      try {
-        v.pause();
-        const p = Math.max(0, Math.min(1, progressRef.current ?? 0));
-        v.currentTime = Math.min(p * v.duration, v.duration - 0.05);
-        log("ready", reason, {
-          duration: v.duration,
-          progress: p,
-          currentTime: v.currentTime,
-        });
-      } catch (e) {
-        log("sync-error", e);
-      }
-      // Refresh ScrollTrigger so any pin-spacing that may have been computed
-      // before the video's intrinsic dimensions were known is recalculated.
-      ScrollTrigger.refresh();
+      onResolve?.(next);
+    };
+
+    const trySync = (reason: string) => {
+      log("event", reason, {
+        readyState: v.readyState,
+        duration: v.duration,
+      });
+      if (isReady()) resolve("ready");
     };
 
     const onMeta = () => trySync("loadedmetadata");
     const onData = () => trySync("loadeddata");
     const onCanPlay = () => trySync("canplay");
+    const onCanPlayThrough = () => trySync("canplaythrough");
     const onError = () => {
-      // Don't flip `ready`. The poster stays visible, the section degrades
-      // gracefully to a static image. Logging only.
-      log("video-error", { code: v.error?.code, message: v.error?.message });
+      log("error", { code: v.error?.code, message: v.error?.message });
+      resolve("fallback");
     };
+    const onStalled = () => log("stalled");
+    const onWaiting = () => log("waiting");
 
     v.addEventListener("loadedmetadata", onMeta);
     v.addEventListener("loadeddata", onData);
     v.addEventListener("canplay", onCanPlay);
+    v.addEventListener("canplaythrough", onCanPlayThrough);
     v.addEventListener("error", onError);
+    v.addEventListener("stalled", onStalled);
+    v.addEventListener("waiting", onWaiting);
 
-    // If the video was served from cache and is already past metadata, do
-    // the sync immediately (no event will fire for already-loaded media).
+    // If the video was already in cache and is past metadata, sync now.
     if (isReady()) {
       trySync("already-ready");
     } else if (v.readyState === 0) {
-      // preload="auto" is only a hint; some browsers defer. Force it.
+      // preload="auto" is only a hint; force the request.
       try {
         v.load();
       } catch (e) {
@@ -127,35 +138,57 @@ export function useVideoScrub(
       }
     }
 
+    // Hard timeout — if we're still pending after READY_TIMEOUT_MS the section
+    // degrades to its always-on poster Ken-Burns animation. The page is never
+    // left static.
+    timeoutId = window.setTimeout(() => {
+      if (!resolved) resolve("fallback");
+    }, READY_TIMEOUT_MS);
+
     return () => {
       v.removeEventListener("loadedmetadata", onMeta);
       v.removeEventListener("loadeddata", onData);
       v.removeEventListener("canplay", onCanPlay);
+      v.removeEventListener("canplaythrough", onCanPlayThrough);
       v.removeEventListener("error", onError);
+      v.removeEventListener("stalled", onStalled);
+      v.removeEventListener("waiting", onWaiting);
+      if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, [videoRef, progressRef]);
+  }, [videoRef, progressRef, onResolve]);
 
-  return ready;
+  return { ready, status };
 }
 
+/* ─── safe scrub writer ──────────────────────────────────────────────────── */
+
 /**
- * Safe scrub writer. Use inside `onUpdate`. Drops the write silently when the
- * video isn't ready yet — but the caller should keep updating `progressRef`
- * so the hook can do its forced first-sync as soon as the video catches up.
+ * Safe `video.currentTime` setter. Use inside ScrollTrigger.onUpdate.
+ *
+ * Drops the write silently if:
+ *  - video not ready
+ *  - duration is not a finite positive number
+ *  - a previous seek is still in flight (v.seeking)
+ *  - target time is within one frame of the current frame (avoids hammering)
+ *  - the browser rejects the seek (e.g. mid-buffer)
  */
 export function scrubVideo(
   v: HTMLVideoElement | null,
   ready: RefObject<boolean>,
   progress: number
 ) {
-  if (!v) return;
-  if (!ready.current) return;
+  if (!v || !ready.current) return;
   const d = v.duration;
   if (!Number.isFinite(d) || d <= 0) return;
+  if (v.seeking) return;
+
   const p = progress < 0 ? 0 : progress > 1 ? 1 : progress;
+  const target = Math.min(p * d, d - 0.05);
+  if (Math.abs(v.currentTime - target) < FRAME_EPSILON) return;
+
   try {
-    v.currentTime = Math.min(p * d, d - 0.05);
+    v.currentTime = target;
   } catch {
-    // Browser refused the seek (e.g. mid-buffer). Skipping is safe.
+    // Safe to ignore — next onUpdate will retry.
   }
 }

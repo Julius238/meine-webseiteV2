@@ -64,7 +64,7 @@ export function Act3() {
   const root = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef(0);
-  const ready = useVideoScrub(videoRef, progressRef);
+  const { ready } = useVideoScrub(videoRef, progressRef);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -174,6 +174,24 @@ export function Act3() {
         0.87
       );
       tl.to(".phase3-bridge", { opacity: 1, duration: 0.1 }, 0.91);
+
+      // Always-on poster Ken Burns — graceful fallback if the drift video
+      // stalls or never resolves (see useVideoScrub timeout).
+      gsap.fromTo(
+        ".act3-poster",
+        { scale: 1.02, y: 0 },
+        {
+          scale: 1.08,
+          y: -16,
+          ease: "none",
+          scrollTrigger: {
+            trigger: root.current,
+            start: "top top",
+            end: "+=250%",
+            scrub: true,
+          },
+        }
+      );
     }, root);
 
     return () => ctx.revert();
@@ -193,6 +211,7 @@ export function Act3() {
           posterSrc={assets.aboutArchitecture.src!}
           endPosterSrc={assets.contactSystem.src!}
           className="absolute inset-0 -z-10"
+          posterClassName="act3-poster"
         />
 
         {/* Permanent background calmer — uniform dark wash sits BETWEEN video and
