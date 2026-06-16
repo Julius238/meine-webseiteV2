@@ -2,8 +2,9 @@
 
 import { useLayoutEffect, useRef } from "react";
 import Image from "next/image";
-import { gsap, ScrollTrigger, isMobile } from "@/lib/gsap";
+import { gsap, isMobile, prefersReducedMotion } from "@/lib/gsap";
 import { CinematicVideo } from "@/components/visuals/CinematicVideo";
+import { useVideoScrub, scrubVideo } from "@/lib/useVideoScrub";
 import {
   ApplicationScene,
   sceneByKey,
@@ -142,20 +143,13 @@ const solutions: Solution[] = [
 export function Act2() {
   const root = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const progressRef = useRef(0);
+  const ready = useVideoScrub(videoRef, progressRef);
 
   useLayoutEffect(() => {
-    const v = videoRef.current;
-    const onMeta = () => {
-      try {
-        v?.pause();
-        if (v) v.currentTime = 0.01;
-      } catch {}
-      ScrollTrigger.refresh();
-    };
-    v?.addEventListener("loadedmetadata", onMeta);
-
     const ctx = gsap.context(() => {
       if (isMobile()) {
+        if (prefersReducedMotion()) return;
         gsap.utils.toArray<HTMLElement>(".act2-mobile-panel").forEach((el) => {
           gsap.from(el.querySelectorAll(".m-reveal"), {
             opacity: 0,
@@ -198,13 +192,8 @@ export function Act2() {
           scrub: true,
           anticipatePin: 1,
           onUpdate: (self) => {
-            const vv = videoRef.current;
-            if (vv && vv.duration && Number.isFinite(vv.duration)) {
-              vv.currentTime = Math.min(
-                self.progress * vv.duration,
-                vv.duration - 0.05
-              );
-            }
+            progressRef.current = self.progress;
+            scrubVideo(videoRef.current, ready, self.progress);
           },
         },
         defaults: { ease: "none" },
@@ -366,11 +355,8 @@ export function Act2() {
       });
     }, root);
 
-    return () => {
-      v?.removeEventListener("loadedmetadata", onMeta);
-      ctx.revert();
-    };
-  }, []);
+    return () => ctx.revert();
+  }, [ready]);
 
   return (
     <section ref={root} className="relative isolate overflow-hidden bg-ink-950">

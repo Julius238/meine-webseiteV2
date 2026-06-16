@@ -1,8 +1,9 @@
 "use client";
 
 import { useLayoutEffect, useRef } from "react";
-import { gsap, ScrollTrigger, isMobile } from "@/lib/gsap";
+import { gsap, isMobile, prefersReducedMotion } from "@/lib/gsap";
 import { CinematicVideo } from "@/components/visuals/CinematicVideo";
+import { useVideoScrub, scrubVideo } from "@/lib/useVideoScrub";
 import { assets } from "@/lib/assets";
 
 /**
@@ -28,22 +29,17 @@ const VIDEO_SRC = "/assets/act1.mp4";
 export function Act1() {
   const root = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Last scroll progress remembered for the hook's forced re-sync once
+  // metadata arrives (e.g. user reloaded mid-section).
+  const progressRef = useRef(0);
+  const ready = useVideoScrub(videoRef, progressRef);
 
   useLayoutEffect(() => {
-    // Make sure the video lands on the correct first frame and that ScrollTrigger
-    // refreshes once metadata is known (duration becomes finite after loadedmetadata).
-    const v = videoRef.current;
-    const onMeta = () => {
-      try {
-        v?.pause();
-        if (v) v.currentTime = 0.01;
-      } catch {}
-      ScrollTrigger.refresh();
-    };
-    v?.addEventListener("loadedmetadata", onMeta);
-
     const ctx = gsap.context(() => {
       if (isMobile()) {
+        // Skip GSAP intro animations for users who prefer reduced motion;
+        // elements stay at their natural visible state.
+        if (prefersReducedMotion()) return;
         gsap.from(".act1-hero > *", {
           opacity: 0,
           y: 28,
@@ -77,11 +73,10 @@ export function Act1() {
           scrub: true,
           anticipatePin: 1,
           onUpdate: (self) => {
-            const v = videoRef.current;
-            if (v && v.duration && Number.isFinite(v.duration)) {
-              // small leading offset so we always sit inside the video range
-              v.currentTime = Math.min(self.progress * v.duration, v.duration - 0.05);
-            }
+            // Always remember the current scroll progress so the hook can do
+            // a forced re-sync the moment the video becomes seekable.
+            progressRef.current = self.progress;
+            scrubVideo(videoRef.current, ready, self.progress);
           },
           onRefresh: () => {
             // try to keep paused state once dimensions settle
@@ -139,11 +134,8 @@ export function Act1() {
       });
     }, root);
 
-    return () => {
-      v?.removeEventListener("loadedmetadata", onMeta);
-      ctx.revert();
-    };
-  }, []);
+    return () => ctx.revert();
+  }, [ready]);
 
   return (
     <section

@@ -1,53 +1,45 @@
 "use client";
 
-import { forwardRef } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import Image from "next/image";
 
 type Props = {
-  /** Final scrub video (mp4/webm). On mobile only the poster is shown. */
   videoSrc?: string;
-  /** Always-present still — shown until video has loaded, and on mobile as fallback. */
   posterSrc: string;
-  /** Optional: an "end frame" still that the desktop cross-fades onto after the video ends.
-   *  Helps when the video's last second isn't quite the still we want to land on. */
   endPosterSrc?: string;
   className?: string;
-  /** Pass-through priority for the poster image. */
   priority?: boolean;
-  /** object-position for the poster image. */
   objectPosition?: string;
 };
 
 /**
- * Bare-bones scrub-able video stage.
+ * Scrub-able video stage.
  *
- * The PARENT controls the scroll-scrub via the forwarded ref:
- *
- *   const vidRef = useRef<HTMLVideoElement>(null);
- *   ...
- *   <CinematicVideo ref={vidRef} videoSrc="..." posterSrc="..." />
- *   ...
- *   ScrollTrigger.create({
- *     ...
- *     onUpdate: (self) => {
- *       const v = vidRef.current;
- *       if (v && v.duration) v.currentTime = self.progress * v.duration;
- *     }
- *   });
- *
- * Important:
- *  - video is muted + playsinline + preload="auto" → satisfies browser scrubbing rules
- *  - we never call .play(); only currentTime is driven by scroll
- *  - poster is rendered behind via <Image> so first paint shows the still before the video buffers
+ * IMPORTANT mobile note
+ * ---------------------
+ * The <video> element only receives `src` once we know the client viewport is
+ * ≥ md (768px). On smaller screens the element renders without `src` so the
+ * browser fetches ZERO video bytes — saves ~60 MB on phones. The poster
+ * (Higgsfield still) is what visitors actually see on mobile anyway.
  */
 export const CinematicVideo = forwardRef<HTMLVideoElement, Props>(function CinematicVideo(
   { videoSrc, posterSrc, endPosterSrc, className = "", priority = false, objectPosition = "center" },
   ref
 ) {
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width: 768px)");
+    setIsDesktop(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
   return (
     <div className={className}>
       <div className="relative w-full h-full overflow-hidden">
-        {/* Poster always paints first (and is the only visual on mobile) */}
         <Image
           src={posterSrc}
           alt=""
@@ -72,14 +64,17 @@ export const CinematicVideo = forwardRef<HTMLVideoElement, Props>(function Cinem
         {videoSrc && (
           <video
             ref={ref}
-            src={videoSrc}
+            // src is only set on desktop — keeps mobile from fetching 60MB:
+            src={isDesktop ? videoSrc : undefined}
             muted
+            autoPlay={false}
+            loop={false}
+            controls={false}
             playsInline
             preload="auto"
             poster={posterSrc}
             className="absolute inset-0 w-full h-full object-cover hidden md:block"
             style={{ objectPosition }}
-            // Avoid right-click controls; this is a backdrop element.
             disablePictureInPicture
           />
         )}

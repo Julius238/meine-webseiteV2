@@ -67,7 +67,8 @@ export function Contact() {
       <div className="pointer-events-none absolute inset-0 -z-[7] bg-ink-950/55" />
 
       {/* Asymmetric darken behind the form — right side near-opaque so the form
-          reads against a clean dark surface; left stays only slightly lit.    */}
+          reads against a clean dark surface; left stays only slightly lit.
+          Desktop only — mobile uses a uniform vertical dim below.            */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-[5] hidden md:block"
@@ -75,6 +76,12 @@ export function Contact() {
           background:
             "linear-gradient(to left, rgba(5,8,18,0.88) 0%, rgba(5,8,18,0.6) 35%, rgba(5,8,18,0.2) 75%, rgba(5,8,18,0.1) 100%)",
         }}
+      />
+      {/* Mobile-only uniform dim — form sits over a calm dark surface, no
+          asymmetric left/right layout to read.                              */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-[5] md:hidden bg-ink-950/65"
       />
 
       <div className="relative mx-auto max-w-6xl px-6 md:px-8 w-full grid md:grid-cols-12 gap-12 items-center">
@@ -136,7 +143,8 @@ export function Contact() {
                         key={t}
                         type="button"
                         onClick={() => toggle(t)}
-                        className={`px-3 py-1.5 rounded-full text-sm border transition ${
+                        // larger touch target on mobile (44px+), keeps desktop look
+                        className={`px-4 py-2.5 md:px-3 md:py-1.5 rounded-full text-sm border transition ${
                           on
                             ? "bg-accent text-ink-950 border-accent shadow-[0_0_20px_rgba(94,231,255,0.4)]"
                             : "bg-white/[0.02] text-white/80 border-white/10 hover:border-white/25"
@@ -168,7 +176,8 @@ export function Contact() {
                   required
                   rows={5}
                   placeholder="Kurz beschreiben — Problem, Idee, gewünschtes Ergebnis."
-                  className="w-full rounded-lg bg-ink-950/60 border border-white/10 px-4 py-3 text-white placeholder-mute-soft focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 transition resize-none"
+                  // text-base prevents iOS Safari from auto-zooming on focus
+                  className="w-full rounded-lg bg-ink-950/60 border border-white/10 px-4 py-3 text-base text-white placeholder-mute-soft focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 transition resize-none"
                 />
               </div>
 
@@ -224,7 +233,8 @@ function Field({
         name={name}
         type={type}
         required={required}
-        className="w-full rounded-lg bg-ink-950/60 border border-white/10 px-4 py-3 text-white placeholder-mute-soft focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 transition"
+        // text-base prevents iOS Safari from auto-zooming on focus
+        className="w-full rounded-lg bg-ink-950/60 border border-white/10 px-4 py-3 text-base text-white placeholder-mute-soft focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 transition"
       />
     </div>
   );

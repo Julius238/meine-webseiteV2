@@ -38,12 +38,12 @@ export function ApplicationScene({
         }}
       />
 
-      <div style={{ perspective: "1800px" }}>
+      {/* 3D perspective tilt only above md — on phones the rotation reads as
+          a tilted card on a narrow screen, hurts readability and can clip. */}
+      <div className="md:[perspective:1800px]">
         <div
-          className="relative rounded-2xl overflow-hidden border border-white/12 shadow-[0_40px_100px_rgba(0,0,0,0.65)]"
+          className="relative rounded-2xl overflow-hidden border border-white/12 shadow-[0_40px_100px_rgba(0,0,0,0.65)] md:[transform:rotateY(-3deg)_rotateX(1.5deg)] md:[transform-style:preserve-3d]"
           style={{
-            transform: "rotateY(-3deg) rotateX(1.5deg)",
-            transformStyle: "preserve-3d",
             background:
               "linear-gradient(155deg, rgba(20,28,46,0.95) 0%, rgba(10,15,25,0.95) 100%)",
             backdropFilter: "blur(24px)",
