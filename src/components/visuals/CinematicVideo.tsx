@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 
 type Props = {
@@ -13,6 +13,17 @@ type Props = {
   /** Class applied to the poster image — Acts use this to target the
    *  always-on Ken-Burns animation that runs underneath the video. */
   posterClassName?: string;
+  /**
+   * Playback mode:
+   *  - "scrub" (default): video stays paused; an external hook drives
+   *    `currentTime` from scroll position. Used only for the Act 1 hero.
+   *  - "loop": video autoplays as a muted, seamless ambient loop. No seeking,
+   *    so it never stutters under scroll. Used for Act 2 / Act 3 where stability
+   *    matters more than frame-exact scroll sync.
+   * In both modes the underlying poster + its Ken-Burns animation is the
+   * graceful fallback if the video errors or can't autoplay.
+   */
+  mode?: "scrub" | "loop";
 };
 
 /**
@@ -38,10 +49,12 @@ export const CinematicVideo = forwardRef<HTMLVideoElement, Props>(function Cinem
     priority = false,
     objectPosition = "center",
     posterClassName = "",
+    mode = "scrub",
   },
   ref
 ) {
   const [isDesktop, setIsDesktop] = useState(false);
+  const innerRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -51,6 +64,38 @@ export const CinematicVideo = forwardRef<HTMLVideoElement, Props>(function Cinem
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
+
+  // Loop mode: kick off playback once the desktop src is attached. autoPlay +
+  // muted + playsInline is allowed without a user gesture, but some browsers
+  // still need an explicit play() after the src swaps in. We honour
+  // prefers-reduced-motion by leaving the video paused — the static poster
+  // then carries the section.
+  useEffect(() => {
+    if (mode !== "loop" || !isDesktop) return;
+    const v = innerRef.current;
+    if (!v) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      v.pause();
+      return;
+    }
+    const tryPlay = () => {
+      const p = v.play();
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    };
+    if (v.readyState >= 2) tryPlay();
+    v.addEventListener("canplay", tryPlay);
+    return () => v.removeEventListener("canplay", tryPlay);
+  }, [mode, isDesktop, videoSrc]);
+
+  // Expose the inner <video> both to the forwarded ref (scrub mode needs it)
+  // and to our own ref (loop mode autoplay).
+  const setVideoRef = (node: HTMLVideoElement | null) => {
+    innerRef.current = node;
+    if (typeof ref === "function") ref(node);
+    else if (ref) ref.current = node;
+  };
+
+  const isLoop = mode === "loop";
 
   return (
     <div className={className}>
@@ -78,11 +123,11 @@ export const CinematicVideo = forwardRef<HTMLVideoElement, Props>(function Cinem
 
         {videoSrc && (
           <video
-            ref={ref}
+            ref={setVideoRef}
             src={isDesktop ? videoSrc : undefined}
             muted
-            autoPlay={false}
-            loop={false}
+            autoPlay={isLoop}
+            loop={isLoop}
             controls={false}
             playsInline
             preload="auto"

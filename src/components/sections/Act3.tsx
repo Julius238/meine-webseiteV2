@@ -2,7 +2,6 @@
 
 import { useLayoutEffect, useRef } from "react";
 import { gsap, isMobile, prefersReducedMotion } from "@/lib/gsap";
-import { useVideoScrub, scrubVideo } from "@/lib/useVideoScrub";
 import { CinematicVideo } from "@/components/visuals/CinematicVideo";
 import { assets } from "@/lib/assets";
 
@@ -10,9 +9,10 @@ import { assets } from "@/lib/assets";
  * Akt III — Im System
  *
  * One pinned closing cinematic sequence. The Higgsfield video (about-architecture
- * → contact-system) is scrubbed by scroll: the camera drifts slowly upward
- * through translucent architectural layers, then settles on a finished network
- * of glowing nodes. Three text phases land like inscriptions on the layers.
+ * → contact-system) plays as a muted ambient LOOP — a slow upward drift through
+ * translucent architectural layers. No scroll-scrubbing (kept only for Act 1),
+ * so the close stays smooth. Three text phases land like inscriptions on the
+ * layers, still driven by the pinned scroll timeline.
  *
  * Scroll timeline (in % of pin duration ≈ 250 svh):
  *   0.00 – 0.25  Headline      "Ein System braucht einen Architekten."
@@ -62,9 +62,6 @@ const stack = [
 
 export function Act3() {
   const root = useRef<HTMLElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const progressRef = useRef(0);
-  const { ready } = useVideoScrub(videoRef, progressRef);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -104,10 +101,6 @@ export function Act3() {
           pin: true,
           scrub: true,
           anticipatePin: 1,
-          onUpdate: (self) => {
-            progressRef.current = self.progress;
-            scrubVideo(videoRef.current, ready, self.progress);
-          },
         },
         defaults: { ease: "none" },
       });
@@ -175,8 +168,9 @@ export function Act3() {
       );
       tl.to(".phase3-bridge", { opacity: 1, duration: 0.1 }, 0.91);
 
-      // Always-on poster Ken Burns — graceful fallback if the drift video
-      // stalls or never resolves (see useVideoScrub timeout).
+      // Always-on poster Ken Burns — graceful fallback if the loop video
+      // errors or autoplay is blocked. Sits under the video; covered when the
+      // loop plays.
       gsap.fromTo(
         ".act3-poster",
         { scale: 1.02, y: 0 },
@@ -195,7 +189,7 @@ export function Act3() {
     }, root);
 
     return () => ctx.revert();
-  }, [ready]);
+  }, []);
 
   return (
     <section
@@ -206,8 +200,8 @@ export function Act3() {
       {/* DESKTOP — pinned drift through the architecture */}
       <div className="hidden md:block relative h-[100svh]">
         <CinematicVideo
-          ref={videoRef}
           videoSrc={VIDEO_SRC}
+          mode="loop"
           posterSrc={assets.aboutArchitecture.src!}
           endPosterSrc={assets.contactSystem.src!}
           className="absolute inset-0 -z-10"
