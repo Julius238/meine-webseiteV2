@@ -43,4 +43,5 @@ jobs:
           protocol: ftps
           local-dir: ./out/
           server-dir: ./
-          dangerous-clean-slate: false
+          dangerous-clean-slate: true
+          state-name: .ftp-deploy-sync-state.json
