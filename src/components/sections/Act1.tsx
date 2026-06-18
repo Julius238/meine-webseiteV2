@@ -3,7 +3,7 @@
 import { useLayoutEffect, useRef } from "react";
 import { gsap, isMobile, prefersReducedMotion } from "@/lib/gsap";
 import { CinematicVideo } from "@/components/visuals/CinematicVideo";
-import { useVideoScrub, scrubVideo } from "@/lib/useVideoScrub";
+import { useVideoScrub } from "@/lib/useVideoScrub";
 import { assets } from "@/lib/assets";
 
 /**
@@ -32,7 +32,7 @@ export function Act1() {
   // Last scroll progress remembered for the hook's forced re-sync once
   // metadata arrives (e.g. user reloaded mid-section).
   const progressRef = useRef(0);
-  const { ready } = useVideoScrub(videoRef, progressRef);
+  const { ready, wake } = useVideoScrub(videoRef, progressRef);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -73,10 +73,10 @@ export function Act1() {
           scrub: true,
           anticipatePin: 1,
           onUpdate: (self) => {
-            // Always remember the current scroll progress so the hook can do
-            // a forced re-sync the moment the video becomes seekable.
+            // Only publish the target progress + wake the smoothing driver.
+            // The rAF loop in useVideoScrub owns the throttled seeking.
             progressRef.current = self.progress;
-            scrubVideo(videoRef.current, ready, self.progress);
+            wake();
           },
           onRefresh: () => {
             // try to keep paused state once dimensions settle
@@ -155,7 +155,7 @@ export function Act1() {
     }, root);
 
     return () => ctx.revert();
-  }, [ready]);
+  }, [ready, wake]);
 
   return (
     <section

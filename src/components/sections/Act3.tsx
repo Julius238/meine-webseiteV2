@@ -3,16 +3,17 @@
 import { useLayoutEffect, useRef } from "react";
 import { gsap, isMobile, prefersReducedMotion } from "@/lib/gsap";
 import { CinematicVideo } from "@/components/visuals/CinematicVideo";
+import { useVideoScrub } from "@/lib/useVideoScrub";
 import { assets } from "@/lib/assets";
 
 /**
  * Akt III — Im System
  *
  * One pinned closing cinematic sequence. The Higgsfield video (about-architecture
- * → contact-system) plays as a muted ambient LOOP — a slow upward drift through
- * translucent architectural layers. No scroll-scrubbing (kept only for Act 1),
- * so the close stays smooth. Three text phases land like inscriptions on the
- * layers, still driven by the pinned scroll timeline.
+ * → contact-system) is scroll-scrubbed via useVideoScrub — a slow upward drift
+ * through translucent architectural layers, driven by scroll position (forward
+ * scrubs forward, back scrubs backward, stopping holds). Seeking is throttled &
+ * rAF-smoothed. Three text phases land like inscriptions on the layers.
  *
  * Scroll timeline (in % of pin duration ≈ 250 svh):
  *   0.00 – 0.25  Headline      "Ein System braucht einen Architekten."
@@ -62,6 +63,9 @@ const stack = [
 
 export function Act3() {
   const root = useRef<HTMLElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const progressRef = useRef(0);
+  const { ready, wake } = useVideoScrub(videoRef, progressRef);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -101,6 +105,15 @@ export function Act3() {
           pin: true,
           scrub: true,
           anticipatePin: 1,
+          onUpdate: (self) => {
+            // Publish target progress + wake the throttled scrub driver.
+            progressRef.current = self.progress;
+            wake();
+          },
+          onRefresh: () => {
+            const v = videoRef.current;
+            if (v) v.pause();
+          },
         },
         defaults: { ease: "none" },
       });
@@ -189,7 +202,7 @@ export function Act3() {
     }, root);
 
     return () => ctx.revert();
-  }, []);
+  }, [ready, wake]);
 
   return (
     <section
@@ -200,8 +213,10 @@ export function Act3() {
       {/* DESKTOP — pinned drift through the architecture */}
       <div className="hidden md:block relative h-[100svh]">
         <CinematicVideo
+          ref={videoRef}
           videoSrc={VIDEO_SRC}
-          mode="loop"
+          /* Scroll-synced scrub (default mode) — the drift through the
+             architecture layers is driven by scroll position again. */
           posterSrc={assets.aboutArchitecture.src!}
           endPosterSrc={assets.contactSystem.src!}
           className="absolute inset-0 -z-10"

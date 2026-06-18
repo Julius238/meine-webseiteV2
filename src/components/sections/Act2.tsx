@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef } from "react";
 import Image from "next/image";
 import { gsap, isMobile, prefersReducedMotion } from "@/lib/gsap";
 import { CinematicVideo } from "@/components/visuals/CinematicVideo";
+import { useVideoScrub } from "@/lib/useVideoScrub";
 import {
   ApplicationScene,
   sceneByKey,
@@ -15,10 +16,11 @@ import { assets } from "@/lib/assets";
  * Akt II — Das System entsteht
  *
  * One long pinned cinematic sequence. The Higgsfield video (~15 s, problem-chaos
- * → transformation-network) plays as a muted ambient LOOP behind the content —
- * no scroll-scrubbing here, which keeps it perfectly smooth even while Act 1's
- * hero video is being scrubbed. Five content phases cross-fade as text overlays
- * (still driven by the pinned scroll timeline) on top of the assembling world.
+ * → transformation-network) is scroll-scrubbed via useVideoScrub: scrolling
+ * forward runs the clip forward, scrolling back runs it backward, stopping the
+ * scroll holds the frame. The seeking is throttled & rAF-smoothed (see
+ * useVideoScrub), so it never hammers currentTime per scroll tick. Five content
+ * phases cross-fade as text overlays on top of the assembling world.
  *
  * Scroll timeline (in % of pin duration ≈ 600 svh):
  *   0.00 – 0.10  Bridge:        "Chaos → Struktur"
@@ -143,6 +145,9 @@ const solutions: Solution[] = [
 
 export function Act2() {
   const root = useRef<HTMLElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const progressRef = useRef(0);
+  const { ready, wake } = useVideoScrub(videoRef, progressRef);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -189,6 +194,15 @@ export function Act2() {
           pin: true,
           scrub: true,
           anticipatePin: 1,
+          onUpdate: (self) => {
+            // Publish target progress + wake the throttled scrub driver.
+            progressRef.current = self.progress;
+            wake();
+          },
+          onRefresh: () => {
+            const v = videoRef.current;
+            if (v) v.pause();
+          },
         },
         defaults: { ease: "none" },
       });
@@ -369,18 +383,18 @@ export function Act2() {
     }, root);
 
     return () => ctx.revert();
-  }, []);
+  }, [ready, wake]);
 
   return (
     <section ref={root} className="relative isolate overflow-hidden bg-ink-950">
       {/* DESKTOP — single pinned canvas with five phase overlays */}
       <div className="hidden md:block relative h-[100svh]">
         <CinematicVideo
+          ref={videoRef}
           videoSrc={VIDEO_SRC}
-          mode="loop"
-          /* Start poster is the convergence frame (transition-bridge), not the
-             chaos desk — avoids visual repetition with Act 1's ending and
-             removes the perceived "laptop opening" motion artefact. */
+          /* Scroll-synced scrub (default mode). Start poster is the convergence
+             frame (transition-bridge), not the chaos desk — avoids visual
+             repetition with Act 1's ending. */
           posterSrc={assets.transitionBridge.src!}
           endPosterSrc={assets.transformationNetwork.src!}
           className="absolute inset-0 -z-10"

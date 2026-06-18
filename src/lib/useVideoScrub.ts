@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { ScrollTrigger } from "@/lib/gsap";
 
 /* ─── debug ──────────────────────────────────────────────────────────────── */
@@ -26,25 +26,47 @@ const READY_TIMEOUT_MS = 3500;
 /** Min ΔcurrentTime we bother to write (≈ one 30fps frame). */
 const FRAME_EPSILON = 1 / 30;
 
+/**
+ * Smoothing factor of the rAF driver: each frame the playhead moves this
+ * fraction of the remaining distance toward the scroll target. Lower = softer
+ * trailing, higher = tighter to the scroll. ~0.2 gives a calm ~150 ms catch-up.
+ */
+const EASE = 0.2;
+
+/** When eased playhead is within this many seconds of target, snap & treat as settled. */
+const SNAP_SECONDS = 0.01;
+
+/** Stop the rAF loop after this many consecutive settled frames (re-armed by wake()). */
+const IDLE_FRAMES = 12;
+
 export type ScrubStatus = "pending" | "ready" | "fallback";
 
 /* ─── hook ───────────────────────────────────────────────────────────────── */
 
 /**
- * Stable video-scrub bootstrap with timeout fallback.
+ * Scroll-synced video scrubbing — throttled & smoothed.
  *
- * State machine:
+ * Readiness state machine:
  *   "pending"  → waiting for video metadata + canplay
  *   "ready"    → scrubbing wired up, currentTime synced to scroll
  *   "fallback" → video didn't become scrub-ready within READY_TIMEOUT_MS
  *                (or errored). The poster Ken-Burns animation that runs in
  *                parallel keeps the section visually alive.
- *
  * The state only ever transitions once. After "ready" or "fallback" it stays.
  *
- * onResolve fires once with the final status — Acts can use it to log/warn
- * but don't need to reshape their layout (the always-on poster animation
- * already provides a graceful fallback visual).
+ * Scrubbing model (the important part):
+ *   ScrollTrigger.onUpdate writes the *target* progress into `progressRef` and
+ *   calls the returned `wake()`. It DOES NOT seek the video. A single
+ *   requestAnimationFrame loop owns all seeking:
+ *     - it eases an internal playhead toward `progress * duration`
+ *     - it only writes `video.currentTime` when the delta is worth a frame AND
+ *       no previous seek is still in flight (`video.seeking`)
+ *     - it sleeps itself once the playhead has settled, so a parked scroll
+ *       costs nothing and three Acts never thrash the decoder in parallel
+ *
+ * Result: scrolling forward runs the clip forward, scrolling back runs it
+ * backward, and stopping the scroll stops the video — without hammering
+ * currentTime on every scroll tick.
  */
 export function useVideoScrub(
   videoRef: RefObject<HTMLVideoElement | null>,
@@ -53,6 +75,8 @@ export function useVideoScrub(
 ) {
   const ready = useRef(false);
   const status = useRef<ScrubStatus>("pending");
+  // Stable handle the rAF driver installs; `wake` below forwards to it.
+  const wakeImpl = useRef<() => void>(() => {});
 
   useEffect(() => {
     const v = videoRef.current;
@@ -61,6 +85,74 @@ export function useVideoScrub(
     let timeoutId: number | null = null;
     let resolved = false;
 
+    /* ── rAF smoothing driver ──────────────────────────────────────────── */
+    let raf = 0;
+    let running = false;
+    let primed = false; // playhead initialised to the live scroll position?
+    let eased = 0; // internal, smoothed playhead (seconds)
+    let idle = 0;
+
+    const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+
+    const frame = () => {
+      // Default to "settled": if the video isn't scrub-ready (still loading or
+      // fell back to the poster) we must still let the loop fall asleep, else
+      // it would spin forever. A fresh wake() / resolve("ready") re-arms it.
+      let settled = true;
+      const d = v.duration;
+
+      if (ready.current && Number.isFinite(d) && d > 0) {
+        const target = Math.min(clamp01(progressRef.current ?? 0) * d, d - 0.05);
+
+        // On first run after a wake, jump to the current scroll position
+        // instead of sweeping in from wherever we left off.
+        if (!primed) {
+          eased = target;
+          primed = true;
+        }
+
+        const diff = target - eased;
+        if (Math.abs(diff) < SNAP_SECONDS) {
+          eased = target;
+        } else {
+          eased += diff * EASE;
+        }
+
+        // Throttle: skip while a seek is still resolving, and only seek when the
+        // change is at least ~one frame. This caps writes at the decoder's seek
+        // rate rather than once per scroll event.
+        if (!v.seeking && Math.abs(v.currentTime - eased) > FRAME_EPSILON) {
+          try {
+            v.currentTime = eased;
+          } catch {
+            // mid-buffer rejection — next frame retries
+          }
+        }
+
+        settled =
+          Math.abs(target - eased) < SNAP_SECONDS &&
+          (v.seeking || Math.abs(v.currentTime - target) < FRAME_EPSILON);
+      }
+
+      idle = settled ? idle + 1 : 0;
+
+      if (idle > IDLE_FRAMES) {
+        running = false;
+        raf = 0;
+        return; // sleep until the next wake()
+      }
+      raf = requestAnimationFrame(frame);
+    };
+
+    const wake = () => {
+      idle = 0;
+      if (running) return;
+      running = true;
+      raf = requestAnimationFrame(frame);
+    };
+    wakeImpl.current = wake;
+
+    /* ── readiness state machine ───────────────────────────────────────── */
     const isReady = () =>
       Number.isFinite(v.duration) && v.duration > 0 && v.readyState >= 1;
 
@@ -76,8 +168,12 @@ export function useVideoScrub(
       if (next === "ready") {
         try {
           v.pause();
-          const p = Math.max(0, Math.min(1, progressRef.current ?? 0));
+          const p = clamp01(progressRef.current ?? 0);
           v.currentTime = Math.min(p * v.duration, v.duration - 0.05);
+          // Seed the driver's playhead and kick one pass so the first frame
+          // already matches the scroll position.
+          eased = v.currentTime;
+          primed = true;
           log("resolved-ready", {
             duration: v.duration,
             progress: p,
@@ -86,6 +182,7 @@ export function useVideoScrub(
         } catch (e) {
           log("sync-error", e);
         }
+        wake();
         // After the video's intrinsic dimensions are settled the pin spacing
         // may need to recompute. Cheap and idempotent.
         ScrollTrigger.refresh();
@@ -100,10 +197,7 @@ export function useVideoScrub(
     };
 
     const trySync = (reason: string) => {
-      log("event", reason, {
-        readyState: v.readyState,
-        duration: v.duration,
-      });
+      log("event", reason, { readyState: v.readyState, duration: v.duration });
       if (isReady()) resolve("ready");
     };
 
@@ -139,8 +233,7 @@ export function useVideoScrub(
     }
 
     // Hard timeout — if we're still pending after READY_TIMEOUT_MS the section
-    // degrades to its always-on poster Ken-Burns animation. The page is never
-    // left static.
+    // degrades to its always-on poster Ken-Burns animation. Never left static.
     timeoutId = window.setTimeout(() => {
       if (!resolved) resolve("fallback");
     }, READY_TIMEOUT_MS);
@@ -154,41 +247,15 @@ export function useVideoScrub(
       v.removeEventListener("stalled", onStalled);
       v.removeEventListener("waiting", onWaiting);
       if (timeoutId !== null) clearTimeout(timeoutId);
+      if (raf) cancelAnimationFrame(raf);
+      running = false;
+      wakeImpl.current = () => {};
     };
   }, [videoRef, progressRef, onResolve]);
 
-  return { ready, status };
-}
+  /** Nudge the rAF driver awake — call from ScrollTrigger.onUpdate after
+   *  writing the new progress into `progressRef`. Cheap & idempotent. */
+  const wake = useCallback(() => wakeImpl.current(), []);
 
-/* ─── safe scrub writer ──────────────────────────────────────────────────── */
-
-/**
- * Safe `video.currentTime` setter. Use inside ScrollTrigger.onUpdate.
- *
- * Drops the write silently if:
- *  - video not ready
- *  - duration is not a finite positive number
- *  - a previous seek is still in flight (v.seeking)
- *  - target time is within one frame of the current frame (avoids hammering)
- *  - the browser rejects the seek (e.g. mid-buffer)
- */
-export function scrubVideo(
-  v: HTMLVideoElement | null,
-  ready: RefObject<boolean>,
-  progress: number
-) {
-  if (!v || !ready.current) return;
-  const d = v.duration;
-  if (!Number.isFinite(d) || d <= 0) return;
-  if (v.seeking) return;
-
-  const p = progress < 0 ? 0 : progress > 1 ? 1 : progress;
-  const target = Math.min(p * d, d - 0.05);
-  if (Math.abs(v.currentTime - target) < FRAME_EPSILON) return;
-
-  try {
-    v.currentTime = target;
-  } catch {
-    // Safe to ignore — next onUpdate will retry.
-  }
+  return { ready, status, wake };
 }
