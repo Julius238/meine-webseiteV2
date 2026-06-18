@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -33,7 +33,7 @@ jobs:
           test -d out/assets
           ls -la out
 
-     - name: Deploy out folder to Hostinger public_html
+      - name: Deploy out folder to Hostinger public_html
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
